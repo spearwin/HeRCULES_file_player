@@ -1,4 +1,4 @@
-# File player for HeRCULES dataset
+# File Player for HeRCULES Dataset
 
 Maintainer: Hanjun Kim (hanjun815@snu.ac.kr)
 
