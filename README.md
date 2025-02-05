@@ -23,7 +23,7 @@ $ sudo apt-get install ros-'version'-novatel-gps-driver
 $ mkdir -p catkin_ws/src
 $ cd catkin_ws/src
 $ git clone https://github.com/hanjun815/HeRCULES_file_player.git
-$ cd ../..
+$ cd ~/catkin_ws
 $ catkin_make
 ```
 
