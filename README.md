@@ -1,11 +1,13 @@
 # File Player for HeRCULES Dataset
 
-Maintainer: Hanjun Kim (hanjun815@snu.ac.kr)
 
 
 ## News
 - 2025/02/05: Our dataset is available via [https://sites.google.com/view/hercules_dataset](https://sites.google.com/view/hercules_dataset).
-
+- 2025/02/05 : ROS based fileplayer of the HeRCULES dataset is released.
+- 2025/03/08 : PR_GT has been updated with a unified local coordinate system.
+- 2025/03/10 : Stereo Camera Data is uploaded.
+  
 ## What is File player?
 This program is a file player for the complex urban data set. If a user installs the ROS using "Desktop-Full version", there is only one additional dependent package, except for the ROS default package. First, clone this package into the src folder of your desired ROS workspace.
 
@@ -50,6 +52,7 @@ Here's a step-by-step guide:
 - Our Radar development tools are available via [Polar2X](https://github.com/hanjun815/Polar2X).
 
 ## Contributors
+- Maintainer: Hanjun Kim (hanjun815@snu.ac.kr)
 - Jinyong Jeong: The original author
 - Minwoo Jung: made the player system compatible with LIO-SAM input (i.e., supports ring information of a lidar scan)
 
