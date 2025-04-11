@@ -1,4 +1,5 @@
 #include <QMutexLocker>
+#include <string>
 
 #include "ROSThread.h"
 
@@ -210,10 +211,12 @@ void ROSThread::Ready()
   double height, north_velocity, east_velocity, up_velocity, roll, pitch, azimuth;
   // string status;
   char status[17];
+  int status_value;
   novatel_gps_msgs::Inspva inspva_data;
   inspva_data_.clear();
-  while(fscanf(fp,"%ld,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%s",&stamp,&latitude,&longitude,&height,&north_velocity,&east_velocity,&up_velocity,&roll,&pitch,&azimuth,status) == 11){
+  while(fscanf(fp,"%ld,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%s %d",&stamp,&latitude,&longitude,&height,&north_velocity,&east_velocity,&up_velocity,&roll,&pitch,&azimuth,status, &status_value) == 12){
   //17%19[^\n] %29[^\n]
+    
     inspva_data.header.stamp.fromNSec(stamp);
     inspva_data.header.frame_id = "inspva";
     inspva_data.latitude = latitude;
@@ -225,7 +228,7 @@ void ROSThread::Ready()
     inspva_data.roll = roll;
     inspva_data.pitch = pitch;
     inspva_data.azimuth = azimuth;
-    inspva_data.status = status;
+    inspva_data.status = std::string(status) + " " + std::to_string(status_value);
     inspva_data_[stamp] = inspva_data;
   }
   cout << "Inspva data are loaded" << endl;
