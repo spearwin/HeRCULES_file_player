@@ -7,7 +7,7 @@
  </div>
 
 ## News
-- 2025/02/05: Our dataset is available via [https://sites.google.com/view/hercules_dataset](https://sites.google.com/view/herculesdataset).
+- 2025/02/05: Our dataset is available via [https://sites.google.com/view/herculesdataset](https://sites.google.com/view/herculesdataset).
 - 2025/02/05 : ROS based fileplayer of the HeRCULES dataset is released.
 - 2025/03/08 : PR_GT has been updated with a unified local coordinate system.
 - 2025/03/10 : Stereo Camera Data is uploaded.
