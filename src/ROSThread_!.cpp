@@ -1,5 +1,4 @@
 #include <QMutexLocker>
-#include <string>
 
 #include "ROSThread.h"
 
@@ -11,11 +10,8 @@ ROSThread::ROSThread(QObject *parent, QMutex *th_mutex) :
   processed_stamp_ = 0;
   play_rate_ = 1.0;
   loop_flag_ = false;
-  save_flag_ = false;
-  process_flag_ = false;
   stop_skip_flag_ = true;
-  stereo_right_active_ = true;
-  stereo_left_active_ = true;
+  stereo_active_ = true;
   radarpolar_active_ = true;
   minimum = 0;
   search_bound_ = 10;
@@ -38,8 +34,8 @@ ROSThread::~ROSThread()
   continental_thread_.active_ = false;
   continentalobject_thread_.active_ = false;
   radarpolar_thread_.active_ = false;
-  stereo_right_thread_.active_ = false;
-  stereo_left_thread_.active_ = false;
+
+  stereo_thread_.active_ = false;
 
   usleep(100000);
 
@@ -67,12 +63,8 @@ ROSThread::~ROSThread()
   radarpolar_thread_.cv_.notify_all(); 
   if(radarpolar_thread_.thread_.joinable()) radarpolar_thread_.thread_.join();
 
-  stereo_right_thread_.cv_.notify_all();
-  if(stereo_right_thread_.thread_.joinable()) stereo_right_thread_.thread_.join();
-
-  stereo_left_thread_.cv_.notify_all();
-  if(stereo_left_thread_.thread_.joinable()) stereo_left_thread_.thread_.join();
-
+  stereo_thread_.cv_.notify_all();
+  if(stereo_thread_.thread_.joinable()) stereo_thread_.thread_.join();
 }
 
 void ROSThread::ros_initialize(ros::NodeHandle &n)
@@ -88,6 +80,8 @@ void ROSThread::ros_initialize(ros::NodeHandle &n)
   gps_pub_ = nh_.advertise<sensor_msgs::NavSatFix>("/gps/fix", 1000);
   inspva_pub_ = nh_.advertise<novatel_gps_msgs::Inspva>("/inspva", 1000);
 
+  // imu_origin_pub_ = nh_.advertise<irp_sen_msgs::imu>("/imu/data", 1000);
+  imu_origin_pub_ = nh_.advertise<irp_sen_msgs::imu>("/xsens_imu_data", 1000);
   imu_pub_ = nh_.advertise<sensor_msgs::Imu>("/imu/data_raw", 1000);
   magnet_pub_ = nh_.advertise<sensor_msgs::MagneticField>("/imu/mag", 1000);
 
@@ -101,8 +95,8 @@ void ROSThread::ros_initialize(ros::NodeHandle &n)
   stereo_left_pub_ = nh_.advertise<sensor_msgs::Image>("/stereo/left/image_raw", 10);
   stereo_right_pub_ = nh_.advertise<sensor_msgs::Image>("/stereo/right/image_raw", 10);
   
-  // stereo_left_info_pub_ = nh_.advertise<sensor_msgs::CameraInfo>("/stereo/left/camera_info", 10);
-  // stereo_right_info_pub_ = nh_.advertise<sensor_msgs::CameraInfo>("/stereo/right/camera_info", 10);
+  stereo_left_info_pub_ = nh_.advertise<sensor_msgs::CameraInfo>("/stereo/left/camera_info", 10);
+  stereo_right_info_pub_ = nh_.advertise<sensor_msgs::CameraInfo>("/stereo/right/camera_info", 10);
  
   clock_pub_ = nh_.advertise<rosgraph_msgs::Clock>("/clock", 1);
 }
@@ -145,16 +139,12 @@ void ROSThread::Ready()
   radarpolar_thread_.cv_.notify_all();
   if(radarpolar_thread_.thread_.joinable()) radarpolar_thread_.thread_.join();
 
-  stereo_right_thread_.active_ = false;
-  stereo_right_thread_.cv_.notify_all();
-  if(stereo_right_thread_.thread_.joinable()) stereo_right_thread_.thread_.join();
-
-  stereo_left_thread_.active_ = false;
-  stereo_left_thread_.cv_.notify_all();
-  if(stereo_left_thread_.thread_.joinable()) stereo_left_thread_.thread_.join();
+  stereo_thread_.active_ = false;
+  stereo_thread_.cv_.notify_all();
+  if(stereo_thread_.thread_.joinable()) stereo_thread_.thread_.join();
 
   //check path is right or not
-  ifstream f((data_folder_path_+"/sensor_data/datastamp.csv").c_str());
+  ifstream f((data_folder_path_+"/data_stamp.csv").c_str());
   if(!f.good()){
      cout << "Please check file path. Input path is wrong" << endl;
      return;
@@ -166,7 +156,7 @@ void ROSThread::Ready()
   int64_t stamp;
   //data stamp data load
 
-  fp = fopen((data_folder_path_+"/sensor_data/datastamp.csv").c_str(),"r");
+  fp = fopen((data_folder_path_+"/data_stamp.csv").c_str(),"r");
   char data_name[50];
   data_stamp_.clear();
   while(fscanf(fp,"%ld,%s\n",&stamp,data_name) == 2){
@@ -180,7 +170,7 @@ void ROSThread::Ready()
   last_data_stamp_ = prev(data_stamp_.end(),1)->first - 1;
 
 //Read gps data
-  fp = fopen((data_folder_path_+"/sensor_data/gps.csv").c_str(),"r");
+  fp = fopen((data_folder_path_+"/gps.csv").c_str(),"r");
   double latitude, longitude, altitude, altitude_orthometric;
   double cov[9];
   sensor_msgs::NavSatFix gps_data;
@@ -206,17 +196,15 @@ void ROSThread::Ready()
 
 
   //Read inspva data
-  fp = fopen((data_folder_path_+"/sensor_data/inspva.csv").c_str(),"r");
+  fp = fopen((data_folder_path_+"/Inertial_data/inspva.csv").c_str(),"r");
   // double latitude, longitude, altitude, altitude_orthometric;
   double height, north_velocity, east_velocity, up_velocity, roll, pitch, azimuth;
   // string status;
   char status[17];
-  int status_value;
   novatel_gps_msgs::Inspva inspva_data;
   inspva_data_.clear();
-  while(fscanf(fp,"%ld,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%s %d",&stamp,&latitude,&longitude,&height,&north_velocity,&east_velocity,&up_velocity,&roll,&pitch,&azimuth,status, &status_value) == 12){
+  while(fscanf(fp,"%ld,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%s",&stamp,&latitude,&longitude,&height,&north_velocity,&east_velocity,&up_velocity,&roll,&pitch,&azimuth,status) == 11){
   //17%19[^\n] %29[^\n]
-    
     inspva_data.header.stamp.fromNSec(stamp);
     inspva_data.header.frame_id = "inspva";
     inspva_data.latitude = latitude;
@@ -228,15 +216,16 @@ void ROSThread::Ready()
     inspva_data.roll = roll;
     inspva_data.pitch = pitch;
     inspva_data.azimuth = azimuth;
-    inspva_data.status = std::string(status) + " " + std::to_string(status_value);
+    inspva_data.status = status;
     inspva_data_[stamp] = inspva_data;
   }
   cout << "Inspva data are loaded" << endl;
   fclose(fp);
 
   //Read IMU data
-  fp = fopen((data_folder_path_+"/sensor_data/xsens_imu.csv").c_str(),"r");
+  fp = fopen((data_folder_path_+"/Inertial_data/xsens_imu.csv").c_str(),"r");
   double q_x,q_y,q_z,q_w,x,y,z,g_x,g_y,g_z,a_x,a_y,a_z,m_x,m_y,m_z;
+  irp_sen_msgs::imu imu_data_origin;
   sensor_msgs::Imu imu_data;
   sensor_msgs::MagneticField mag_data;
   imu_data_.clear();
@@ -255,6 +244,17 @@ void ROSThread::Ready()
 
       imu_data_[stamp] = imu_data;
       imu_data_version_ = 1;
+
+      imu_data_origin.header.stamp.fromNSec(stamp);
+      imu_data_origin.header.frame_id = "imu";
+      imu_data_origin.quaternion_data.x = q_x;
+      imu_data_origin.quaternion_data.y = q_y;
+      imu_data_origin.quaternion_data.z = q_z;
+      imu_data_origin.quaternion_data.w = q_w;
+      imu_data_origin.eular_data.x = x;
+      imu_data_origin.eular_data.y = y;
+      imu_data_origin.eular_data.z = z;
+      imu_data_origin_[stamp] = imu_data_origin;
 
     }else if(length == 17){
       imu_data.header.stamp.fromNSec(stamp);
@@ -289,6 +289,28 @@ void ROSThread::Ready()
       mag_data.magnetic_field.z = m_z;
       mag_data_[stamp] = mag_data;
       imu_data_version_ = 2;
+
+
+      imu_data_origin.header.stamp.fromNSec(stamp);
+      imu_data_origin.header.frame_id = "imu";
+      imu_data_origin.quaternion_data.x = q_x;
+      imu_data_origin.quaternion_data.y = q_y;
+      imu_data_origin.quaternion_data.z = q_z;
+      imu_data_origin.quaternion_data.w = q_w;
+      imu_data_origin.eular_data.x = x;
+      imu_data_origin.eular_data.y = y;
+      imu_data_origin.eular_data.z = z;
+      imu_data_origin.gyro_data.x = g_x;
+      imu_data_origin.gyro_data.y = g_y;
+      imu_data_origin.gyro_data.z = g_z;
+      imu_data_origin.acceleration_data.x = a_x;
+      imu_data_origin.acceleration_data.y = a_y;
+      imu_data_origin.acceleration_data.z = a_z;
+      imu_data_origin.magneticfield_data.x = m_x;
+      imu_data_origin.magneticfield_data.y = m_y;
+      imu_data_origin.magneticfield_data.z = m_z;
+      imu_data_origin_[stamp] = imu_data_origin;
+
     }
   }
   cout << "IMU data are loaded" << endl;
@@ -298,41 +320,37 @@ void ROSThread::Ready()
   continental_file_list_.clear();
   continentalobject_file_list_.clear();
   radarpolar_file_list_.clear();
-  stereo_right_file_list_.clear();
-  stereo_left_file_list_.clear();
 
-  // GetDirList(data_folder_path_ + "/image/stereo_left",stereo_file_list_);
+  GetDirList(data_folder_path_ + "/image/stereo_left",stereo_file_list_);
   GetDirList(data_folder_path_ + "/LiDAR/Aeva",aeva_file_list_);
-  GetDirList(data_folder_path_ + "/Radar/Continental",continental_file_list_);
-  GetDirList(data_folder_path_ + "/Radar/Continentalobject",continentalobject_file_list_);
-  GetDirList(data_folder_path_ + "/Radar/Navtech", radarpolar_file_list_);
-  GetDirList(data_folder_path_ + "/Image/stereo_right", stereo_right_file_list_);
-  GetDirList(data_folder_path_ + "/Image/stereo_left", stereo_left_file_list_);
+  GetDirList(data_folder_path_ + "/radar/continental",continental_file_list_);
+  GetDirList(data_folder_path_ + "/radar/continentalobject",continentalobject_file_list_);
+  GetDirList(data_folder_path_ + "/radar/polar", radarpolar_file_list_);
 
   //load camera info
 
-  // left_camera_nh_ = ros::NodeHandle(nh_,"left");
-  // right_camera_nh_ = ros::NodeHandle(nh_,"right");
+  left_camera_nh_ = ros::NodeHandle(nh_,"left");
+  right_camera_nh_ = ros::NodeHandle(nh_,"right");
 
-  // left_cinfo_ = boost::shared_ptr<camera_info_manager::CameraInfoManager>(new camera_info_manager::CameraInfoManager(left_camera_nh_,"/stereo/left"));
-  // right_cinfo_ = boost::shared_ptr<camera_info_manager::CameraInfoManager>(new camera_info_manager::CameraInfoManager(right_camera_nh_,"/stereo/right"));
+  left_cinfo_ = boost::shared_ptr<camera_info_manager::CameraInfoManager>(new camera_info_manager::CameraInfoManager(left_camera_nh_,"/stereo/left"));
+  right_cinfo_ = boost::shared_ptr<camera_info_manager::CameraInfoManager>(new camera_info_manager::CameraInfoManager(right_camera_nh_,"/stereo/right"));
 
-  // string left_yaml_file_path = "file://" + data_folder_path_ + "/calibration/left.yaml";
-  // string right_yaml_file_path = "file://" + data_folder_path_ + "/calibration/right.yaml";
-
-
-  // if(left_cinfo_->validateURL(left_yaml_file_path)){
-  //     left_cinfo_->loadCameraInfo(left_yaml_file_path);
-  //    cout << "Success to load camera info" << endl;
-  //     stereo_left_info_ = left_cinfo_->getCameraInfo();
-  // }
+  string left_yaml_file_path = "file://" + data_folder_path_ + "/calibration/left.yaml";
+  string right_yaml_file_path = "file://" + data_folder_path_ + "/calibration/right.yaml";
 
 
-  // if(right_cinfo_->validateURL(right_yaml_file_path)){
-  //     right_cinfo_->loadCameraInfo(right_yaml_file_path);
-  //    cout << "Success to load camera info" << endl;
-  //     stereo_right_info_ = right_cinfo_->getCameraInfo();
-  // }
+  if(left_cinfo_->validateURL(left_yaml_file_path)){
+      left_cinfo_->loadCameraInfo(left_yaml_file_path);
+     cout << "Success to load camera info" << endl;
+      stereo_left_info_ = left_cinfo_->getCameraInfo();
+  }
+
+
+  if(right_cinfo_->validateURL(right_yaml_file_path)){
+      right_cinfo_->loadCameraInfo(right_yaml_file_path);
+     cout << "Success to load camera info" << endl;
+      stereo_right_info_ = right_cinfo_->getCameraInfo();
+  }
 
 
   data_stamp_thread_.active_ = true;
@@ -343,8 +361,8 @@ void ROSThread::Ready()
   continental_thread_.active_ = true;
   continentalobject_thread_.active_ = true;
   radarpolar_thread_.active_ = true;
-  stereo_right_thread_.active_ = true;
-  stereo_left_thread_.active_ = true;
+
+  stereo_thread_.active_ = true;
 
 
   data_stamp_thread_.thread_ = std::thread(&ROSThread::DataStampThread,this);
@@ -355,8 +373,7 @@ void ROSThread::Ready()
   continental_thread_.thread_ = std::thread(&ROSThread::ContinentalThread,this);
   continentalobject_thread_.thread_ = std::thread(&ROSThread::ContinentalobjectThread,this);
   radarpolar_thread_.thread_ = std::thread(&ROSThread::RadarpolarThread,this);
-  stereo_right_thread_.thread_ = std::thread(&ROSThread::StereorightThread,this);
-  stereo_left_thread_.thread_ = std::thread(&ROSThread::StereoleftThread,this);
+  stereo_thread_.thread_ = std::thread(&ROSThread::StereoThread,this);
 }
 
 void ROSThread::DataStampThread()
@@ -428,15 +445,12 @@ void ROSThread::DataStampThread()
     }else if(iter->second.compare("continentalobject") == 0){
         continentalobject_thread_.push(stamp);
         continentalobject_thread_.cv_.notify_all();
-    }else if(iter->second.compare("navtech") == 0 && radarpolar_active_ == true){
+    }else if(iter->second.compare("radar") == 0 && radarpolar_active_ == true){
         radarpolar_thread_.push(stamp);
         radarpolar_thread_.cv_.notify_all();
-    }else if(iter->second.compare("stereo_right") == 0 && stereo_right_active_ == true){
-        stereo_right_thread_.push(stamp);
-        stereo_right_thread_.cv_.notify_all();
-    }else if(iter->second.compare("stereo_left") == 0 && stereo_left_active_ == true){
-        stereo_left_thread_.push(stamp);
-        stereo_left_thread_.cv_.notify_all();
+    }else if(iter->second.compare("stereo") == 0 && stereo_active_ == true){
+        stereo_thread_.push(stamp);
+        stereo_thread_.cv_.notify_all();
     }
     stamp_show_count_++;
     if(stamp_show_count_ > 100){
@@ -465,15 +479,6 @@ void ROSThread::DataStampThread()
             usleep(10000);
         }
     }
-    if(save_flag_ == true && process_flag_ == false){
-      bag_.open(data_folder_path_ + "/" + to_string(bag_idx_) + ".bag", rosbag::bagmode::Write);
-      process_flag_ = true;
-    }
-    else if(save_flag_ == false && process_flag_ == true){
-      process_flag_ = false;
-      bag_.close();
-      bag_idx_++;
-    }
   }
   cout << "Data publish complete" << endl;
 
@@ -497,7 +502,6 @@ void ROSThread::GpsThread()
     if(gps_thread_.active_ == false) return;
   }
 }
-
 void ROSThread::InspvaThread()
 {
   while(1){
@@ -505,14 +509,11 @@ void ROSThread::InspvaThread()
     inspva_thread_.cv_.wait(ul);
     if(inspva_thread_.active_ == false) return;
     ul.unlock();
+
     while(!inspva_thread_.data_queue_.empty()){
       auto data = inspva_thread_.pop();
       //process
       if(inspva_data_.find(data) != inspva_data_.end()){
-        if(save_flag_ == true && process_flag_ == true){
-          std::lock_guard<std::mutex> lock(bag_mutex_);
-          bag_.write("/inspva", inspva_data_[data].header.stamp, inspva_data_[data]);
-        }
         inspva_pub_.publish(inspva_data_[data]);
       }
 
@@ -528,15 +529,16 @@ void ROSThread::ImuThread()
     imu_thread_.cv_.wait(ul);
     if(imu_thread_.active_ == false) return;
     ul.unlock();
+
     while(!imu_thread_.data_queue_.empty()){
       auto data = imu_thread_.pop();
       //process
       if(imu_data_.find(data) != imu_data_.end()){
-        if(save_flag_ == true && process_flag_ == true){
-          std::lock_guard<std::mutex> lock(bag_mutex_);
-          bag_.write("/imu/data_raw", imu_data_[data].header.stamp, imu_data_[data]);
-        }
         imu_pub_.publish(imu_data_[data]);
+        imu_origin_pub_.publish(imu_data_origin_[data]);
+        if(imu_data_version_ == 2){
+          magnet_pub_.publish(mag_data_[data]);
+        }
       }
 
     }
@@ -677,15 +679,15 @@ void ROSThread::ContinentalThread()
 
             } else {
                 //load current data
-                pcl::PointCloud<pc_type_c> cloud;
+                pcl::PointCloud<pc_type_continental> cloud;
                 cloud.clear();
                 sensor_msgs::PointCloud2 publish_cloud;
-                string current_file_name = data_folder_path_ + "/Radar/Continental" + "/" + to_string(data) + ".bin";
+                string current_file_name = data_folder_path_ + "/radar/continental" + "/" + to_string(data) + ".bin";
                 if(find(next(continental_file_list_.begin(), max(0, previous_file_index - search_bound_)), continental_file_list_.end(), to_string(data) + ".bin") != continental_file_list_.end()){
                     ifstream file;
                     file.open(current_file_name, ios::in|ios::binary);
                     while(!file.eof()){
-                        pc_type_c point;
+                        pc_type_continental point;
                         file.read(reinterpret_cast<char *>(&point.x), sizeof(point.x));
                         file.read(reinterpret_cast<char *>(&point.y), sizeof(point.y));
                         file.read(reinterpret_cast<char *>(&point.z), sizeof(point.z));
@@ -707,17 +709,17 @@ void ROSThread::ContinentalThread()
             }
 
             //load next data
-            pcl::PointCloud<pc_type_c> cloud;
+            pcl::PointCloud<pc_type_continental> cloud;
             cloud.clear();
             sensor_msgs::PointCloud2 publish_cloud;
             current_file_index = find(next(continental_file_list_.begin(), max(0, previous_file_index - search_bound_)), continental_file_list_.end(), to_string(data) + ".bin") - continental_file_list_.begin();
             if(find(next(continental_file_list_.begin(), max(0, previous_file_index - search_bound_)), continental_file_list_.end(), continental_file_list_[current_file_index + 1]) != continental_file_list_.end()){
-                string next_file_name = data_folder_path_ + "/Radar/Continental" + "/" + continental_file_list_[current_file_index + 1];
+                string next_file_name = data_folder_path_ + "/radar/continental" + "/" + continental_file_list_[current_file_index + 1];
 
                 ifstream file;
                 file.open(next_file_name, ios::in|ios::binary);
                 while(!file.eof()){
-                    pc_type_c point;
+                    pc_type_continental point;
                     file.read(reinterpret_cast<char *>(&point.x), sizeof(point.x));
                     file.read(reinterpret_cast<char *>(&point.y), sizeof(point.y));
                     file.read(reinterpret_cast<char *>(&point.z), sizeof(point.z));
@@ -766,15 +768,15 @@ void ROSThread::ContinentalobjectThread()
 
             } else {
                 //load current data
-                pcl::PointCloud<pc_type_co> cloud;
+                pcl::PointCloud<pc_type_continental_object> cloud;
                 cloud.clear();
                 sensor_msgs::PointCloud2 publish_cloud;
-                string current_file_name = data_folder_path_ + "/Radar/Continentalobject" + "/" + to_string(data) + ".bin";
+                string current_file_name = data_folder_path_ + "/radar/continentalobject" + "/" + to_string(data) + ".bin";
                 if(find(next(continentalobject_file_list_.begin(), max(0, previous_file_index - search_bound_)), continentalobject_file_list_.end(), to_string(data) + ".bin") != continentalobject_file_list_.end()){
                     ifstream file;
                     file.open(current_file_name, ios::in|ios::binary);
                     while(!file.eof()){
-                        pc_type_co point;
+                        pc_type_continental_object point;
                         file.read(reinterpret_cast<char *>(&point.x), sizeof(point.x));
                         file.read(reinterpret_cast<char *>(&point.y), sizeof(point.y));
                         file.read(reinterpret_cast<char *>(&point.z), sizeof(point.z));
@@ -793,17 +795,17 @@ void ROSThread::ContinentalobjectThread()
             }
 
             //load next data
-            pcl::PointCloud<pc_type_co> cloud;
+            pcl::PointCloud<pc_type_continental_object> cloud;
             cloud.clear();
             sensor_msgs::PointCloud2 publish_cloud;
             current_file_index = find(next(continentalobject_file_list_.begin(), max(0, previous_file_index - search_bound_)), continentalobject_file_list_.end(), to_string(data) + ".bin") - continentalobject_file_list_.begin();
             if(find(next(continentalobject_file_list_.begin(), max(0, previous_file_index - search_bound_)), continentalobject_file_list_.end(), continentalobject_file_list_[current_file_index + 1]) != continentalobject_file_list_.end()){
-                string next_file_name = data_folder_path_ + "/Radar/Continentalobject" + "/" + continentalobject_file_list_[current_file_index + 1];
+                string next_file_name = data_folder_path_ + "/radar/continentalobject" + "/" + continentalobject_file_list_[current_file_index + 1];
 
                 ifstream file;
                 file.open(next_file_name, ios::in|ios::binary);
                 while(!file.eof()){
-                    pc_type_co point;
+                    pc_type_continental_object point;
                     file.read(reinterpret_cast<char *>(&point.x), sizeof(point.x));
                     file.read(reinterpret_cast<char *>(&point.y), sizeof(point.y));
                     file.read(reinterpret_cast<char *>(&point.z), sizeof(point.z));
@@ -847,23 +849,23 @@ ROSThread::RadarpolarThread()
       {
         cv_bridge::CvImage radarpolar_out_msg;
         radarpolar_out_msg.header.stamp.fromNSec(data);
-        radarpolar_out_msg.header.frame_id = "navtech";
+        radarpolar_out_msg.header.frame_id = "radar_polar";
         radarpolar_out_msg.encoding = sensor_msgs::image_encodings::MONO8;
         radarpolar_out_msg.image    = radarpolar_next_.second;
         radarpolar_pub_.publish(radarpolar_out_msg.toImageMsg());
       }
       else
       {
-        string current_radarpolar_name = data_folder_path_ + "/Radar/Navtech" + "/" + to_string(data) + ".png";
+        string current_radarpolar_name = data_folder_path_ + "/radar/polar" + "/" + to_string(data) + ".png";
 
         cv::Mat radarpolar_image;
-        radarpolar_image = imread(current_radarpolar_name, cv::IMREAD_GRAYSCALE);
+        radarpolar_image = imread(current_radarpolar_name, CV_LOAD_IMAGE_GRAYSCALE);
         if(!radarpolar_image.empty())
         {
 
           cv_bridge::CvImage radarpolar_out_msg;
           radarpolar_out_msg.header.stamp.fromNSec(data);
-          radarpolar_out_msg.header.frame_id = "navtech";
+          radarpolar_out_msg.header.frame_id = "radar_polar";
           radarpolar_out_msg.encoding = sensor_msgs::image_encodings::MONO8;
           radarpolar_out_msg.image    = radarpolar_image;
           radarpolar_pub_.publish(radarpolar_out_msg.toImageMsg());
@@ -876,10 +878,10 @@ ROSThread::RadarpolarThread()
       current_img_index = find( next(radarpolar_file_list_.begin(),max(0,previous_img_index - search_bound_)), radarpolar_file_list_.end(), to_string(data)+".png" ) - radarpolar_file_list_.begin();
       if(current_img_index < radarpolar_file_list_.size()-2)
       {
-        string next_radarpolar_name = data_folder_path_ + "/Radar/Navtech" +"/"+ radarpolar_file_list_[current_img_index+1];
+        string next_radarpolar_name = data_folder_path_ + "/radar/polar" +"/"+ radarpolar_file_list_[current_img_index+1];
 
         cv::Mat radarpolar_image;
-        radarpolar_image = imread(next_radarpolar_name, cv::IMREAD_COLOR);
+        radarpolar_image = imread(next_radarpolar_name, CV_LOAD_IMAGE_COLOR);
 
         if(!radarpolar_image.empty())
         {
@@ -894,120 +896,108 @@ ROSThread::RadarpolarThread()
   }
 }
 
-// StereoleftThread
-void ROSThread::StereoleftThread()
+
+void ROSThread::StereoThread()
 {
-    int current_img_index = 0;
-    int previous_img_index = 0;
+  int current_img_index = 0;
+  int previous_img_index = 0;
 
-    while (1) {
-        std::unique_lock<std::mutex> ul(stereo_left_thread_.mutex_);
-        stereo_left_thread_.cv_.wait(ul);
-        if (stereo_left_thread_.active_ == false) return;
-        ul.unlock();
+  while(1){
+    std::unique_lock<std::mutex> ul(stereo_thread_.mutex_);
+    stereo_thread_.cv_.wait(ul);
+    if(stereo_thread_.active_ == false) return;
+    ul.unlock();
 
-        while (!stereo_left_thread_.data_queue_.empty()) {
-            auto data = stereo_left_thread_.pop();
-            // Process
-            if (stereo_left_file_list_.empty()) continue;
+    while(!stereo_thread_.data_queue_.empty()){
+      auto data = stereo_thread_.pop();
+      //process
+      if(stereo_file_list_.size() == 0) continue;
 
-            // Publish
-            if (to_string(data) + ".png" == stereo_left_next_img_.first && !stereo_left_next_img_.second.empty()) {
-                cv_bridge::CvImage left_out_msg;
-                left_out_msg.header.stamp.fromNSec(data);
-                left_out_msg.header.frame_id = "stereo_left";
-                left_out_msg.encoding = sensor_msgs::image_encodings::BGR8; // Change to BGR8
-                left_out_msg.image = stereo_left_next_img_.second;
+      //publish
+      if(to_string(data)+".png" == stereo_left_next_img_.first && !stereo_left_next_img_.second.empty() && !stereo_right_next_img_.second.empty()){
+        cv_bridge::CvImage left_out_msg;
+        left_out_msg.header.stamp.fromNSec(data);
+        left_out_msg.header.frame_id = "stereo_left";
+        left_out_msg.encoding = sensor_msgs::image_encodings::BAYER_BGGR8;
+        left_out_msg.image    = stereo_left_next_img_.second;
 
-                stereo_left_pub_.publish(left_out_msg.toImageMsg());
-            } else {
-                // Load left stereo image
-                string current_stereo_left_name = data_folder_path_ + "/Image/stereo_left/" + to_string(data) + ".png";
-                cv::Mat current_left_image = imread(current_stereo_left_name, cv::IMREAD_COLOR); // Load as color image
+        cv_bridge::CvImage right_out_msg;
+        right_out_msg.header.stamp.fromNSec(data);
+        right_out_msg.header.frame_id = "stereo_right";
+        right_out_msg.encoding = sensor_msgs::image_encodings::BAYER_BGGR8;
+        right_out_msg.image    = stereo_right_next_img_.second;
 
-                if (!current_left_image.empty()) {
-                    cv_bridge::CvImage left_out_msg;
-                    left_out_msg.header.stamp.fromNSec(data);
-                    left_out_msg.header.frame_id = "stereo_left";
-                    left_out_msg.encoding = sensor_msgs::image_encodings::BGR8; // Change to BGR8
-                    left_out_msg.image = current_left_image;
+        stereo_left_info_.header.stamp.fromNSec(data);
+        stereo_left_info_.header.frame_id = "/stereo/left";
+        stereo_right_info_.header.stamp.fromNSec(data);
+        stereo_right_info_.header.frame_id = "/stereo/right";
 
-                    stereo_left_pub_.publish(left_out_msg.toImageMsg());
-                }
-                previous_img_index = 0;
-            }
+        stereo_left_pub_.publish(left_out_msg.toImageMsg());
+        stereo_right_pub_.publish(right_out_msg.toImageMsg());
 
-            // Load next left image
-            current_img_index = find(next(stereo_left_file_list_.begin(), max(0, previous_img_index - search_bound_)), stereo_left_file_list_.end(), to_string(data) + ".png") - stereo_left_file_list_.begin();
-            if (current_img_index < stereo_left_file_list_.size() - 1) {
-                string next_stereo_left_name = data_folder_path_ + "/Image/stereo_left/" + stereo_left_file_list_[current_img_index + 1];
-                cv::Mat next_left_image = imread(next_stereo_left_name, cv::IMREAD_COLOR); // Load as color image
-                if (!next_left_image.empty()) {
-                    stereo_left_next_img_ = make_pair(stereo_left_file_list_[current_img_index + 1], next_left_image);
-                }
-            }
-            previous_img_index = current_img_index;
+        stereo_left_info_pub_.publish(stereo_left_info_);
+        stereo_right_info_pub_.publish(stereo_right_info_);
+
+      }else{
+//        cout << "Re-load stereo image from image path" << endl;
+
+        string current_stereo_left_name = data_folder_path_ + "/image/stereo_left" +"/"+ to_string(data)+".png";
+        string current_stereo_right_name = data_folder_path_ + "/image/stereo_right" +"/"+ to_string(data)+".png";
+        cv::Mat current_left_image;
+        cv::Mat current_right_image;
+        current_left_image = imread(current_stereo_left_name, CV_LOAD_IMAGE_ANYDEPTH);
+        current_right_image = imread(current_stereo_right_name, CV_LOAD_IMAGE_ANYDEPTH);
+
+        if(!current_left_image.empty() && !current_right_image.empty()){
+
+            cv_bridge::CvImage left_out_msg;
+            left_out_msg.header.stamp.fromNSec(data);
+            left_out_msg.header.frame_id = "stereo_left";
+            left_out_msg.encoding = sensor_msgs::image_encodings::BAYER_BGGR8;
+            left_out_msg.image    = current_left_image;
+
+            cv_bridge::CvImage right_out_msg;
+            right_out_msg.header.stamp.fromNSec(data);
+            right_out_msg.header.frame_id = "stereo_right";
+            right_out_msg.encoding = sensor_msgs::image_encodings::BAYER_BGGR8;
+            right_out_msg.image    = current_right_image;
+
+            stereo_left_info_.header.stamp.fromNSec(data);
+            stereo_left_info_.header.frame_id = "/stereo/left";
+            stereo_right_info_.header.stamp.fromNSec(data);
+            stereo_right_info_.header.frame_id = "/stereo/right";
+
+            stereo_left_pub_.publish(left_out_msg.toImageMsg());
+            stereo_right_pub_.publish(right_out_msg.toImageMsg());
+
+            stereo_left_info_pub_.publish(stereo_left_info_);
+            stereo_right_info_pub_.publish(stereo_right_info_);
         }
-        if (stereo_left_thread_.active_ == false) return;
+        previous_img_index = 0;
+
+
+      }
+
+      //load next image
+      current_img_index = find(next(stereo_file_list_.begin(), max(0,previous_img_index - search_bound_)),stereo_file_list_.end(),to_string(data)+".png") - stereo_file_list_.begin();
+      if(current_img_index < stereo_file_list_.size()-2){
+
+          string next_stereo_left_name = data_folder_path_ + "/image/stereo_left" +"/"+ stereo_file_list_[current_img_index+1];
+          string next_stereo_right_name = data_folder_path_ + "/image/stereo_right" +"/"+ stereo_file_list_[current_img_index+1];
+          cv::Mat next_left_image;
+          cv::Mat next_right_image;
+          next_left_image = imread(next_stereo_left_name, CV_LOAD_IMAGE_ANYDEPTH);
+          next_right_image = imread(next_stereo_right_name, CV_LOAD_IMAGE_ANYDEPTH);
+          if(!next_left_image.empty() && !next_right_image.empty()){
+              stereo_left_next_img_ = make_pair(stereo_file_list_[current_img_index+1], next_left_image);
+              stereo_right_next_img_ = make_pair(stereo_file_list_[current_img_index+1], next_right_image);
+          }
+
+      }
+      previous_img_index = current_img_index;
     }
-}
-
-// StereorightThread
-void ROSThread::StereorightThread()
-{
-    int current_img_index = 0;
-    int previous_img_index = 0;
-
-    while (1) {
-        std::unique_lock<std::mutex> ul(stereo_right_thread_.mutex_);
-        stereo_right_thread_.cv_.wait(ul);
-        if (stereo_right_thread_.active_ == false) return;
-        ul.unlock();
-
-        while (!stereo_right_thread_.data_queue_.empty()) {
-            auto data = stereo_right_thread_.pop();
-            // Process
-            if (stereo_right_file_list_.empty()) continue;
-
-            // Publish
-            if (to_string(data) + ".png" == stereo_right_next_img_.first && !stereo_right_next_img_.second.empty()) {
-                cv_bridge::CvImage right_out_msg;
-                right_out_msg.header.stamp.fromNSec(data);
-                right_out_msg.header.frame_id = "stereo_right";
-                right_out_msg.encoding = sensor_msgs::image_encodings::BGR8; // Change to BGR8
-                right_out_msg.image = stereo_right_next_img_.second;
-
-                stereo_right_pub_.publish(right_out_msg.toImageMsg());
-            } else {
-                // Load right stereo image
-                string current_stereo_right_name = data_folder_path_ + "/Image/stereo_right/" + to_string(data) + ".png";
-                cv::Mat current_right_image = imread(current_stereo_right_name, cv::IMREAD_COLOR); // Load as color image
-
-                if (!current_right_image.empty()) {
-                    cv_bridge::CvImage right_out_msg;
-                    right_out_msg.header.stamp.fromNSec(data);
-                    right_out_msg.header.frame_id = "stereo_right";
-                    right_out_msg.encoding = sensor_msgs::image_encodings::BGR8; // Change to BGR8
-                    right_out_msg.image = current_right_image;
-
-                    stereo_right_pub_.publish(right_out_msg.toImageMsg());
-                }
-                previous_img_index = 0;
-            }
-
-            // Load next right image
-            current_img_index = find(next(stereo_right_file_list_.begin(), max(0, previous_img_index - search_bound_)), stereo_right_file_list_.end(), to_string(data) + ".png") - stereo_right_file_list_.begin();
-            if (current_img_index < stereo_right_file_list_.size() - 1) {
-                string next_stereo_right_name = data_folder_path_ + "/Image/stereo_right/" + stereo_right_file_list_[current_img_index + 1];
-                cv::Mat next_right_image = imread(next_stereo_right_name, cv::IMREAD_COLOR); // Load as color image
-                if (!next_right_image.empty()) {
-                    stereo_right_next_img_ = make_pair(stereo_right_file_list_[current_img_index + 1], next_right_image);
-                }
-            }
-            previous_img_index = current_img_index;
-        }
-        if (stereo_right_thread_.active_ == false) return;
-    }
+    if(stereo_thread_.active_ == false) return;
+  }
 }
 
 
