@@ -54,6 +54,12 @@ Here's a step-by-step guide:
 4. Use the 'Stop skip' button to skip intervals when the vehicle remains stationary. This feature enhances the user experience by focusing on significant data.
 5. The loop button ensures that the data resumes playback from the beginning once completed
 
+```
+awk '{print $1",pose_gt"}' PR_GT/Continental_gt.txt > pose_gt_stamp.csv
+cat sensor_data/datastamp.csv pose_gt_stamp.csv | sort > sensor_data/merged_datastamp.csv
+mv sensor_data/merged_datastamp.csv sensor_data/datastamp.csv
+```
+
 ## License and Citation
 - When using the dataset or code, please cite our paper:
 ```
